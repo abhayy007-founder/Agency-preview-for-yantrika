@@ -1,13 +1,19 @@
 import React, { useState } from 'react';
-import { ClientAccount, NavTab } from '../types';
+import { ClientAccount, NavTab, TeamMember } from '../types';
+import { getCurrentMonthBadge } from '../utils/formatters';
 
 interface OverviewScreenProps {
   clients: ClientAccount[];
+  allClientsCount: number;
   onNavigate: (tab: NavTab) => void;
   onOpenLeak: (client: ClientAccount) => void;
   onOpenReassign: (client: ClientAccount) => void;
   onShowToast: (msg: string) => void;
   totalSaved: string;
+  agencyName: string;
+  currentUser: TeamMember;
+  onSimulateSnapshot: (clientId: string) => void;
+  onResetToAdmin?: () => void;
 }
 
 type FilterType = 'urgent' | 'worsening' | 'audited' | 'all';
@@ -15,45 +21,75 @@ type SortType = 'severity' | 'retainer' | 'spend';
 
 export const OverviewScreen: React.FC<OverviewScreenProps> = ({
   clients,
+  allClientsCount,
   onNavigate,
   onOpenLeak,
   onOpenReassign,
   onShowToast,
-  totalSaved
+  totalSaved,
+  agencyName,
+  currentUser,
+  onSimulateSnapshot,
+  onResetToAdmin
 }) => {
   const [filter, setFilter] = useState<FilterType>('urgent');
   const [sort, setSort] = useState<SortType>('severity');
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [emptyStatePreview, setEmptyStatePreview] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [scanningId, setScanningId] = useState<string | null>(null);
+
+  // Dynamic Month Badge computed at render time (Fixing PART 4 Bug 1)
+  const currentMonthBadge = getCurrentMonthBadge();
 
   // Filter clients
-  const filteredClients = clients.filter(c => {
+  const filteredClients = clients.filter((c) => {
     if (emptyStatePreview) return false;
     if (filter === 'urgent') return c.severity === 'high';
-    if (filter === 'worsening') return c.severity === 'high' || c.severity === 'medium';
-    if (filter === 'audited') return c.severity === 'low';
-    return true; // all
-  }).sort((a, b) => {
-    if (sort === 'retainer') return b.monthlyRetainerRaw - a.monthlyRetainerRaw;
-    if (sort === 'spend') return (b.leakage?.leakAmountRaw || 0) - (a.leakage?.leakAmountRaw || 0);
-    // default: severity
-    const order = { high: 1, medium: 2, low: 3 };
-    return order[a.severity] - order[b.severity];
+    if (filter === 'worsening') return c.severity === 'medium' || c.severity === 'high';
+    if (filter === 'audited') return c.severity === 'low' || c.isResolved;
+    return true;
   });
 
-  const urgentCount = clients.filter(c => c.severity === 'high').length;
-  const worseningCount = clients.filter(c => c.severity === 'high' || c.severity === 'medium').length;
-  const auditedCount = clients.filter(c => c.severity === 'low').length;
-  const totalCount = clients.length;
+  // Sort clients
+  const sortedClients = [...filteredClients].sort((a, b) => {
+    if (sort === 'severity') {
+      const order = { high: 0, medium: 1, low: 2 };
+      return order[a.severity] - order[b.severity];
+    }
+    if (sort === 'retainer') {
+      return b.monthlyRetainerRaw - a.monthlyRetainerRaw;
+    }
+    if (sort === 'spend') {
+      const spendA = parseInt(a.monthlySpend.replace(/[^0-9]/g, '')) || 0;
+      const spendB = parseInt(b.monthlySpend.replace(/[^0-9]/g, '')) || 0;
+      return spendB - spendA;
+    }
+    return 0;
+  });
 
   const handleManualSync = () => {
     setSyncing(true);
+    onShowToast(`Syncing ad telemetry across ${clients.length} ${agencyName} accounts...`);
     setTimeout(() => {
       setSyncing(false);
-      onShowToast('Synced with Meta Ads & Google Marketing Platform (MCC)');
+      onShowToast('Synced live Meta CAPI & Google Ads telemetry (0 errors)');
     }, 1200);
   };
+
+  const handleRunDiagnostic = (clientId: string, clientName: string) => {
+    setScanningId(clientId);
+    onShowToast(`Running simulateSnapshot() heuristic on ${clientName}...`);
+    setTimeout(() => {
+      onSimulateSnapshot(clientId);
+      setScanningId(null);
+      onShowToast(`Snapshot calibrated for ${clientName}`);
+    }, 800);
+  };
+
+  const urgentCount = clients.filter((c) => c.severity === 'high').length;
+  const worseningCount = clients.filter((c) => c.severity === 'medium' || c.severity === 'high').length;
+  const auditedCount = clients.filter((c) => c.severity === 'low' || c.isResolved).length;
 
   return (
     <div className="flex flex-col w-full text-[#dbe1ff] px-3 sm:px-4 max-w-xl mx-auto space-y-4 pt-2">
@@ -81,6 +117,31 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
         </button>
       </div>
 
+      {/* Manager Silo Scope Banner (if current persona is MANAGER) */}
+      {currentUser.accessTier === 'MANAGER' && (
+        <div className="p-2.5 rounded-xl bg-[#0070dd]/15 border border-[#0070dd]/40 flex items-center justify-between gap-2 animate-fadeIn">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="material-symbols-outlined text-[#42A5F5] text-[18px] shrink-0">shield</span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-[12px] font-semibold text-white truncate">
+                Manager View: {currentUser.name}
+              </span>
+              <span className="text-[10px] text-[#aac7ff] truncate">
+                RLS scoped to {clients.length} of {allClientsCount} total agency clients
+              </span>
+            </div>
+          </div>
+          {onResetToAdmin && (
+            <button
+              onClick={onResetToAdmin}
+              className="text-[11px] font-mono text-[#42A5F5] hover:underline shrink-0 bg-[#212941] px-2 py-1 rounded"
+            >
+              Reset to Admin
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Value Delivered Retainer-Defense Hero Card */}
       <div className="relative overflow-hidden rounded-xl bg-[#171f36] p-4 shadow-xl border border-[#212941]/50">
         {/* Kinetic Ambient Backing Mesh */}
@@ -100,8 +161,9 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                 Retainer Defense Metric
               </span>
             </div>
+            {/* Dynamic Month Badge (PART 4 Bug 1 Fix) */}
             <span className="px-2 py-0.5 rounded-full bg-[#2c344c] font-mono text-[11px] text-[#42A5F5] font-semibold">
-              OCT 2024
+              {currentMonthBadge}
             </span>
           </div>
 
@@ -118,7 +180,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               Ad spend leaks prevented this month
             </p>
             <p className="text-[12px] text-[#cbc3d5] mt-0.5">
-              Automated proof-of-work justifying retainers across {clients.length} portfolio accounts.
+              Automated proof-of-work justifying retainers across {clients.length} {agencyName} accounts.
             </p>
           </div>
 
@@ -136,319 +198,296 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
         </div>
       </div>
 
-      {/* Agency Performance Metric Chips */}
+      {/* Quick Metrics Chips Row */}
       <div className="grid grid-cols-3 gap-2">
-        <div 
-          onClick={() => onNavigate('team')}
-          className="flex flex-col bg-[#131b32] p-2.5 rounded-lg border border-[#212941]/60 shadow-sm cursor-pointer hover:border-[#42A5F5]/40 transition-colors"
-        >
-          <span className="font-mono text-[10px] text-[#cbc3d5] uppercase">Active Clients</span>
-          <span className="font-mono text-[16px] text-white font-bold mt-1">{clients.length}</span>
-          <span className="text-[11px] text-[#10B981] font-medium mt-0.5">+2 this mo</span>
+        <div className="p-2.5 rounded-lg bg-[#171f36] border border-[#212941] flex flex-col">
+          <span className="text-[10px] font-mono text-[#cbc3d5] uppercase">Active Clients</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-[16px] font-bold text-white">{clients.length}</span>
+            <span className="font-mono text-[10px] text-[#10B981]">+2 mo</span>
+          </div>
         </div>
 
-        <div className="flex flex-col bg-[#131b32] p-2.5 rounded-lg border border-[#212941]/60 shadow-sm">
-          <span className="font-mono text-[10px] text-[#cbc3d5] uppercase">Managed Spend</span>
-          <span className="font-mono text-[16px] text-white font-bold mt-1">₹18.4L</span>
-          <span className="font-mono text-[10px] text-[#cbc3d5]/80 mt-0.5">Trailing 30d</span>
+        <div className="p-2.5 rounded-lg bg-[#171f36] border border-[#212941] flex flex-col">
+          <span className="text-[10px] font-mono text-[#cbc3d5] uppercase">Managed Spend</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-[16px] font-bold text-white">₹18.4L</span>
+            <span className="font-mono text-[10px] text-[#cbc3d5]">30d</span>
+          </div>
         </div>
 
-        <div 
-          onClick={() => setFilter('urgent')}
-          className="flex flex-col bg-[#131b32] p-2.5 rounded-lg border border-[#212941]/60 shadow-sm cursor-pointer hover:border-[#EF4444]/40 transition-colors"
-        >
-          <span className="font-mono text-[10px] text-[#EF4444] font-medium uppercase">Open Leaks</span>
-          <span className="font-mono text-[16px] text-[#EF4444] font-bold mt-1">
-            {urgentCount + worseningCount} <span className="text-white text-[11px] font-normal">pts</span>
-          </span>
-          <span className="text-[11px] text-[#EF4444] font-medium mt-0.5">{urgentCount} Critical</span>
+        <div className="p-2.5 rounded-lg bg-[#171f36] border border-[#212941] flex flex-col">
+          <span className="text-[10px] font-mono text-[#cbc3d5] uppercase">Open Leaks</span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="font-mono text-[16px] font-bold text-[#EF4444]">{urgentCount} pts</span>
+            <span className="font-mono text-[10px] text-[#EF4444]">Critical</span>
+          </div>
         </div>
       </div>
 
-      {/* Triage Command Header & Filter Bar */}
-      <div className="flex flex-col space-y-2 pt-1">
-        <div className="flex items-center justify-between relative">
-          <div className="flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[#42A5F5] text-[20px]">troubleshoot</span>
-            <h2 className="text-[18px] text-white font-semibold tracking-tight">Morning Triage</h2>
+      {/* Section Header: Morning Triage */}
+      <div className="flex flex-col space-y-2.5 pt-1">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-[16px] font-bold text-white tracking-tight">Morning Triage</h2>
+            <p className="text-[11px] text-[#cbc3d5]">Sorted by algorithmic urgency</p>
           </div>
 
-          {/* Sort Control */}
+          {/* Sort Dropdown */}
           <div className="relative">
             <button
               onClick={() => setShowSortDropdown(!showSortDropdown)}
-              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#171f36] text-[#cbc3d5] font-mono text-[11px] hover:text-white transition-colors"
+              className="flex items-center gap-1 text-[11px] font-mono text-[#42A5F5] bg-[#212941] px-2.5 py-1.5 rounded-lg hover:bg-[#2c344c] transition-colors"
             >
-              <span>Sort: {sort.charAt(0).toUpperCase() + sort.slice(1)}</span>
-              <span className="material-symbols-outlined text-[14px]">expand_more</span>
+              <span>Sort: {sort === 'severity' ? 'Urgency' : sort === 'retainer' ? 'Retainer' : 'Spend'}</span>
+              <span className="material-symbols-outlined text-[14px]">arrow_drop_down</span>
             </button>
 
             {showSortDropdown && (
-              <div className="absolute right-0 top-8 w-36 bg-[#171f36] border border-[#2c344c] rounded-lg shadow-xl p-1 z-20 flex flex-col text-[11px] font-mono">
+              <div className="absolute right-0 top-9 w-36 bg-[#171f36] border border-[#2c344c] rounded-xl shadow-xl z-30 py-1 text-[11px] font-mono">
                 <button
                   onClick={() => { setSort('severity'); setShowSortDropdown(false); }}
-                  className={`p-2 rounded text-left ${sort === 'severity' ? 'bg-[#212941] text-[#42A5F5]' : 'text-[#cbc3d5] hover:bg-[#212941]'}`}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[#212941] text-white"
                 >
-                  By Severity
+                  Urgency (High First)
                 </button>
                 <button
                   onClick={() => { setSort('retainer'); setShowSortDropdown(false); }}
-                  className={`p-2 rounded text-left ${sort === 'retainer' ? 'bg-[#212941] text-[#42A5F5]' : 'text-[#cbc3d5] hover:bg-[#212941]'}`}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[#212941] text-white"
                 >
-                  By Retainer Value
+                  Retainer Value
                 </button>
                 <button
                   onClick={() => { setSort('spend'); setShowSortDropdown(false); }}
-                  className={`p-2 rounded text-left ${sort === 'spend' ? 'bg-[#212941] text-[#42A5F5]' : 'text-[#cbc3d5] hover:bg-[#212941]'}`}
+                  className="w-full text-left px-3 py-1.5 hover:bg-[#212941] text-white"
                 >
-                  By Leak Amount
+                  Ad Spend Size
                 </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Horizontal Filter Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+        {/* Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px] font-medium">
           <button
-            onClick={() => { setFilter('urgent'); setEmptyStatePreview(false); }}
-            className={`px-3 py-1.5 rounded-full font-semibold text-[12px] whitespace-nowrap shadow-sm transition-all ${
-              filter === 'urgent' && !emptyStatePreview
-                ? 'bg-[#0070dd] text-white'
-                : 'bg-[#171f36] text-[#cbc3d5] hover:text-white'
+            onClick={() => setFilter('urgent')}
+            className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all ${
+              filter === 'urgent'
+                ? 'bg-[#EF4444]/20 text-[#EF4444] font-semibold border border-[#EF4444]/40'
+                : 'bg-[#171f36] text-[#cbc3d5] hover:bg-[#212941]'
             }`}
           >
             Urgent Triage ({urgentCount})
           </button>
-
           <button
-            onClick={() => { setFilter('worsening'); setEmptyStatePreview(false); }}
-            className={`px-3 py-1.5 rounded-full font-semibold text-[12px] whitespace-nowrap transition-all ${
-              filter === 'worsening' && !emptyStatePreview
-                ? 'bg-[#0070dd] text-white'
-                : 'bg-[#171f36] text-[#cbc3d5] hover:text-white'
+            onClick={() => setFilter('worsening')}
+            className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all ${
+              filter === 'worsening'
+                ? 'bg-[#F59E0B]/20 text-[#F59E0B] font-semibold border border-[#F59E0B]/40'
+                : 'bg-[#171f36] text-[#cbc3d5] hover:bg-[#212941]'
             }`}
           >
             Worsening Trend ({worseningCount})
           </button>
-
           <button
-            onClick={() => { setFilter('audited'); setEmptyStatePreview(false); }}
-            className={`px-3 py-1.5 rounded-full font-semibold text-[12px] whitespace-nowrap transition-all ${
-              filter === 'audited' && !emptyStatePreview
-                ? 'bg-[#0070dd] text-white'
-                : 'bg-[#171f36] text-[#cbc3d5] hover:text-white'
+            onClick={() => setFilter('audited')}
+            className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all ${
+              filter === 'audited'
+                ? 'bg-[#10B981]/20 text-[#10B981] font-semibold border border-[#10B981]/40'
+                : 'bg-[#171f36] text-[#cbc3d5] hover:bg-[#212941]'
             }`}
           >
             Recently Audited ({auditedCount})
           </button>
-
           <button
-            onClick={() => { setFilter('all'); setEmptyStatePreview(false); }}
-            className={`px-3 py-1.5 rounded-full font-semibold text-[12px] whitespace-nowrap transition-all ${
-              filter === 'all' && !emptyStatePreview
-                ? 'bg-[#0070dd] text-white'
-                : 'bg-[#171f36] text-[#cbc3d5] hover:text-white'
+            onClick={() => setFilter('all')}
+            className={`px-3 py-1.5 rounded-full whitespace-nowrap transition-all ${
+              filter === 'all'
+                ? 'bg-[#42A5F5]/20 text-[#42A5F5] font-semibold border border-[#42A5F5]/40'
+                : 'bg-[#171f36] text-[#cbc3d5] hover:bg-[#212941]'
             }`}
           >
-            All Clients ({totalCount})
+            All Clients ({clients.length})
           </button>
         </div>
       </div>
 
-      {/* Client Triage Feed */}
-      {!emptyStatePreview && filteredClients.length > 0 && (
-        <div className="flex flex-col space-y-3">
-          {filteredClients.map((client) => {
+      {/* Client Cards List */}
+      <div className="flex flex-col space-y-3 pb-8">
+        {emptyStatePreview || sortedClients.length === 0 ? (
+          <div className="p-8 rounded-xl bg-[#171f36] border border-[#212941] text-center flex flex-col items-center justify-center space-y-3 shadow-sm">
+            <div className="w-12 h-12 rounded-full bg-[#10B981]/20 flex items-center justify-center text-[#10B981]">
+              <span className="material-symbols-outlined text-[28px]">verified</span>
+            </div>
+            <div className="flex flex-col">
+              <h3 className="text-[16px] font-bold text-white">All Clear! No Open Leaks</h3>
+              <p className="text-[12px] text-[#cbc3d5] max-w-xs mt-1">
+                Zero critical anomalies detected across the current active scope. Telemetry is fully calibrated.
+              </p>
+            </div>
+            <button
+              onClick={() => setEmptyStatePreview(false)}
+              className="text-[12px] text-[#42A5F5] hover:underline font-mono"
+            >
+              Exit preview mode
+            </button>
+          </div>
+        ) : (
+          sortedClients.map((client) => {
             const isHigh = client.severity === 'high';
-            const isMed = client.severity === 'medium';
-            const stripColor = isHigh ? 'bg-[#EF4444]' : isMed ? 'bg-[#F59E0B]' : 'bg-[#10B981]';
-            const badgeBg = isHigh 
-              ? 'bg-[#EF4444]/15 text-[#EF4444]' 
-              : isMed 
-              ? 'bg-[#F59E0B]/15 text-[#F59E0B]' 
-              : 'bg-[#10B981]/15 text-[#10B981]';
-            const badgeIcon = isHigh ? 'error' : isMed ? 'warning' : 'check';
-            const badgeText = isHigh ? 'HIGH' : isMed ? 'MEDIUM' : 'STABLE';
+            const isMedium = client.severity === 'medium';
+            const isLow = client.severity === 'low';
+            const isScanning = scanningId === client.id;
+
+            const borderColor = isHigh
+              ? 'border-l-4 border-l-[#EF4444]'
+              : isMedium
+              ? 'border-l-4 border-l-[#F59E0B]'
+              : 'border-l-4 border-l-[#10B981]';
 
             return (
               <div
                 key={client.id}
-                className="flex flex-col bg-[#171f36] rounded-xl overflow-hidden shadow-lg border border-[#212941]/60 transition-transform active:scale-[0.99]"
+                className={`bg-[#171f36] rounded-xl p-3.5 shadow-md border border-[#212941] ${borderColor} flex flex-col space-y-3 transition-all`}
               >
-                <div className="flex">
-                  {/* Severity accent strip */}
-                  <div className={`w-1.5 ${stripColor} shrink-0`}></div>
+                {/* Client Header Row */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="text-[15px] font-bold text-white truncate">
+                        {client.name}
+                      </span>
+                      <span className="font-mono text-[10px] text-[#cbc3d5] px-1.5 py-0.5 rounded bg-[#212941] shrink-0">
+                        {client.code}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-[#cbc3d5]">
+                      {client.category} • Retainer: <strong className="text-white">{client.monthlyRetainer}</strong>
+                    </span>
+                  </div>
 
-                  <div className="flex flex-col w-full p-3.5 space-y-2.5">
-                    {/* Client Meta Bar */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <h3 className="text-[16px] text-white font-semibold truncate">
-                            {client.name}
-                          </h3>
-                          <span 
-                            className="material-symbols-outlined text-[16px] text-[#42A5F5]" 
-                            title={client.platforms.join(', ')}
-                          >
-                            {client.platforms.includes('Google') ? 'sensors' : 'hub'}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="font-mono text-[10px] text-[#cbc3d5]">{client.category}</span>
-                          <span className="text-[#cbc3d5] text-[8px]">•</span>
-                          <span className="font-mono text-[12px] text-[#DDE1E4] font-medium">
-                            {client.monthlyRetainer}<span className="text-[10px] text-[#cbc3d5]">/mo</span>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Strict Severity Pill */}
-                      <span className={`px-2 py-0.5 rounded-full font-mono text-[11px] font-bold uppercase tracking-wider shrink-0 flex items-center gap-1 ${badgeBg}`}>
-                        <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                          {badgeIcon}
+                  {/* Platforms & Reassign Menu */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1">
+                      {client.platforms.map((p) => (
+                        <span
+                          key={p}
+                          className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-[#212941] text-[#42A5F5]"
+                        >
+                          {p.toUpperCase()}
                         </span>
-                        {badgeText}
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={() => onOpenReassign(client)}
+                      title={`Assigned to ${client.assignedManager}. Click to reassign.`}
+                      className="w-7 h-7 rounded-full bg-[#212941] flex items-center justify-center text-[10px] font-bold text-[#dbe1ff] hover:bg-[#2c344c] transition-colors"
+                    >
+                      {client.assignedManagerAvatar}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Leak Signal Detail */}
+                {client.leakage ? (
+                  <div className="p-2.5 rounded-lg bg-[#131b32] border border-[#212941] flex flex-col space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`material-symbols-outlined text-[16px] ${
+                          isHigh ? 'text-[#EF4444]' : isMedium ? 'text-[#F59E0B]' : 'text-[#10B981]'
+                        }`}>
+                          {client.leakage.actionType === 'inspect' ? 'link_off' : client.leakage.actionType === 'audit' ? 'check_circle' : 'warning'}
+                        </span>
+                        <span className="text-[13px] font-semibold text-white">
+                          {client.leakage.title}
+                        </span>
+                      </div>
+                      <span className={`font-mono text-[11px] font-bold ${
+                        isHigh ? 'text-[#EF4444]' : isMedium ? 'text-[#F59E0B]' : 'text-[#10B981]'
+                      }`}>
+                        {client.leakage.leakAmount}
                       </span>
                     </div>
 
-                    {/* Problem Diagnostic Box */}
-                    {client.leakage && (
-                      <div className="flex flex-col bg-[#131b32] p-2.5 rounded-lg space-y-1 border border-[#212941]/40">
-                        <div className={`flex items-center justify-between ${
-                          isHigh ? 'text-[#EF4444]' : isMed ? 'text-[#F59E0B]' : 'text-[#10B981]'
-                        }`}>
-                          <div className="flex items-center gap-1">
-                            <span className="material-symbols-outlined text-[16px]">
-                              {client.leakage.actionType === 'inspect' ? 'link_off' : client.leakage.actionType === 'rebalance' ? 'pie_chart' : isHigh ? 'campaign' : 'verified'}
-                            </span>
-                            <span className="text-[13px] font-semibold">
-                              {client.leakage.title}
-                            </span>
-                          </div>
-                          <span className="font-mono text-[12px] font-bold">
-                            {client.leakage.leakAmount}
-                          </span>
-                        </div>
+                    <p className="text-[12px] text-[#cbc3d5] leading-relaxed">
+                      {client.leakage.description}
+                    </p>
 
-                        <p className="text-[12px] text-[#cbc3d5] leading-snug">
-                          {client.leakage.description}
-                        </p>
-
-                        <div className="flex items-center gap-3 pt-1 text-[11px]">
-                          <span className={`flex items-center gap-0.5 font-medium ${
-                            isHigh ? 'text-[#EF4444]' : isMed ? 'text-[#cbc3d5]' : 'text-[#cbc3d5]'
-                          }`}>
-                            <span className="material-symbols-outlined text-[13px]">
-                              {isHigh ? 'trending_up' : 'history'}
-                            </span>
-                            {client.leakage.metricBadge}
-                          </span>
-                          <span className="text-[#cbc3d5] flex items-center gap-0.5">
-                            <span className="material-symbols-outlined text-[13px]">history</span>
-                            {client.leakage.reviewedStatus}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Card Actions */}
-                    <div className="flex items-center justify-between pt-1 gap-2">
-                      <div className="flex items-center gap-1.5 bg-[#2c344c]/40 px-2 py-1 rounded-md">
-                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-[#5D35AF] to-[#0045F2] flex items-center justify-center text-[10px] font-bold text-white">
-                          {client.assignedManagerAvatar}
-                        </div>
-                        <span className="text-[12px] text-[#DDE1E4]">{client.assignedManager}</span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => onOpenReassign(client)}
-                          className="px-2.5 py-1 rounded-md bg-[#2c344c] text-[#dbe1ff] text-[12px] hover:bg-[#313851] transition-colors"
-                        >
-                          Reassign
-                        </button>
-
-                        {client.leakage?.actionType === 'rebalance' ? (
-                          <button
-                            onClick={() => onOpenLeak(client)}
-                            className="px-3 py-1 rounded-md bg-[#212941] text-[#42A5F5] text-[12px] font-semibold hover:bg-[#313851] transition-colors"
-                          >
-                            Rebalance Spend
-                          </button>
-                        ) : client.leakage?.actionType === 'audit' ? (
-                          <button
-                            onClick={() => onOpenLeak(client)}
-                            className="px-3 py-1 rounded-md bg-[#212941] text-[#cbc3d5] hover:text-white text-[12px] font-medium transition-colors"
-                          >
-                            View Audit Report
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => onOpenLeak(client)}
-                            className="px-3 py-1 rounded-md bg-gradient-to-r from-[#5D35AF] to-[#0045F2] text-white text-[12px] font-semibold flex items-center gap-1 active:scale-95 transition-transform shadow"
-                          >
-                            <span>{client.leakage?.actionLabel || 'Review Leak'}</span>
-                            <span className="material-symbols-outlined text-[14px]">
-                              {client.leakage?.actionType === 'inspect' ? 'tune' : 'arrow_forward'}
-                            </span>
-                          </button>
-                        )}
-                      </div>
+                    <div className="flex items-center justify-between pt-0.5 text-[10px] font-mono text-[#cbc3d5]">
+                      <span className="text-[#42A5F5]">{client.leakage.metricBadge}</span>
+                      <span>{client.leakage.reviewedStatus}</span>
                     </div>
+                  </div>
+                ) : (
+                  <div className="p-2.5 rounded-lg bg-[#131b32] text-[12px] text-[#10B981] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                    <span>All signals optimal. Zero leakage.</span>
+                  </div>
+                )}
+
+                {/* Action Buttons Row */}
+                <div className="flex items-center justify-between pt-1 gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => onOpenReassign(client)}
+                      className="text-[11px] text-[#cbc3d5] hover:text-[#42A5F5] font-mono flex items-center gap-0.5"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">swap_horiz</span>
+                      <span>Reassign</span>
+                    </button>
+
+                    {/* simulateSnapshot Diagnostic Button (PART 5) */}
+                    <button
+                      onClick={() => handleRunDiagnostic(client.id, client.name)}
+                      disabled={isScanning}
+                      className="text-[11px] text-[#42A5F5] hover:underline font-mono flex items-center gap-0.5 cursor-pointer"
+                      title="Run fallback diagnostic heuristic (simulateSnapshot)"
+                    >
+                      <span className={`material-symbols-outlined text-[14px] ${isScanning ? 'animate-spin' : ''}`}>
+                        {isScanning ? 'progress_activity' : 'model_training'}
+                      </span>
+                      <span>{isScanning ? 'Scanning...' : 'Simulate Scan'}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {client.leakage && (
+                      <button
+                        onClick={() => onOpenLeak(client)}
+                        className={`px-3 py-1.5 rounded-lg font-semibold text-[12px] flex items-center gap-1 active:scale-95 transition-all shadow-sm ${
+                          isHigh
+                            ? 'bg-gradient-to-r from-[#5D35AF] to-[#0045F2] text-white hover:brightness-110'
+                            : isMedium
+                            ? 'bg-[#212941] text-[#42A5F5] hover:bg-[#2c344c]'
+                            : 'bg-[#212941] text-[#10B981] hover:bg-[#2c344c]'
+                        }`}
+                      >
+                        <span>{client.leakage.actionLabel}</span>
+                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
 
-      {/* Zero State Block (Toggleable) */}
-      {emptyStatePreview && (
-        <div className="flex flex-col items-center justify-center py-10 px-4 rounded-xl bg-[#171f36] border border-[#212941] text-center space-y-3 animate-fadeIn">
-          <div className="w-14 h-14 rounded-full bg-[#10B981]/15 flex items-center justify-center text-[#10B981]">
-            <span className="material-symbols-outlined text-[32px]">task_alt</span>
-          </div>
-          <div className="flex flex-col">
-            <h4 className="text-[20px] text-white font-semibold">Triage Queue Clear!</h4>
-            <p className="text-[13px] text-[#cbc3d5] mt-1 max-w-xs leading-relaxed">
-              Zero critical waste flags across ₹18.4L managed spend. Agency retainer value safely defended.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              setEmptyStatePreview(false);
-              onShowToast('Restored active client triage queue');
-            }}
-            className="px-4 py-2 rounded-lg bg-[#212941] text-[#42A5F5] text-[13px] font-semibold hover:bg-[#2c344c] transition-colors"
-          >
-            Return to Active Accounts
-          </button>
-        </div>
-      )}
-
-      {/* Empty State Switcher / Agency Context Bar */}
-      <div className="flex flex-col items-center justify-center p-4 rounded-xl bg-[#131b32] border border-[#212941]/50 text-center space-y-2 mb-4">
-        <div className="flex items-center gap-2 text-[#cbc3d5]">
-          <span className="material-symbols-outlined text-[18px]">verified_user</span>
-          <span className="text-[12px]">All {clients.length} active clients continuously polled by Yantrika Engine</span>
-        </div>
+      {/* Empty State / All Resolved Preview Toggle */}
+      <div className="pt-2 pb-6 flex justify-center">
         <button
-          onClick={() => {
-            setEmptyStatePreview(!emptyStatePreview);
-            if (!emptyStatePreview) {
-              onShowToast('Showing empty state simulation');
-            } else {
-              onShowToast('Restored active client triage queue');
-            }
-          }}
-          className="font-mono text-[11px] text-[#42A5F5] hover:underline py-1"
+          onClick={() => setEmptyStatePreview(!emptyStatePreview)}
+          className="text-[11px] font-mono text-[#cbc3d5] hover:text-[#42A5F5] transition-colors flex items-center gap-1"
         >
-          {emptyStatePreview 
-            ? 'Return to Active Accounts' 
-            : 'Simulate all leaks resolved (Empty State preview)'}
+          <span className="material-symbols-outlined text-[14px]">
+            {emptyStatePreview ? 'visibility_off' : 'visibility'}
+          </span>
+          <span>
+            {emptyStatePreview ? 'Restore active leakage feed' : 'Simulate all leaks resolved (Empty State preview)'}
+          </span>
         </button>
       </div>
     </div>

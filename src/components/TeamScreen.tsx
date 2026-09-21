@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { TeamMember, PendingInvite, ClientAccount } from '../types';
+import { TeamMember, PendingInvite, ClientAccount, Agency } from '../types';
 
 interface TeamScreenProps {
   team: TeamMember[];
   pendingInvites: PendingInvite[];
   clients: ClientAccount[];
+  agency: Agency;
   onInviteSent: (invite: PendingInvite) => void;
   onRevokeInvite: (id: string) => void;
+  onUpdateMemberScope?: (memberId: string, clientIds: string[]) => void;
   onShowToast: (msg: string) => void;
 }
 
@@ -14,8 +16,10 @@ export const TeamScreen: React.FC<TeamScreenProps> = ({
   team,
   pendingInvites,
   clients,
+  agency,
   onInviteSent,
   onRevokeInvite,
+  onUpdateMemberScope,
   onShowToast
 }) => {
   const [showInviteDrawer, setShowInviteDrawer] = useState(false);
@@ -75,6 +79,9 @@ export const TeamScreen: React.FC<TeamScreenProps> = ({
     setSavingScope(true);
     setTimeout(() => {
       setSavingScope(false);
+      if (onUpdateMemberScope) {
+        onUpdateMemberScope(activeScopeMember.id, selectedClientIds);
+      }
       onShowToast(`Updated telemetry scope for ${activeScopeMember.name} (${selectedClientIds.length} accounts)`);
       setActiveScopeMember(null);
     }, 600);
@@ -103,7 +110,7 @@ export const TeamScreen: React.FC<TeamScreenProps> = ({
           Team &amp; Permissions
         </h1>
         <p className="text-[12px] text-[#cbc3d5] leading-relaxed">
-          Multi-seat control for PeakScale Media. Manage buyers, isolate ad account telemetry, and route leakage alerts.
+          Multi-seat control for {agency.name}. Manage buyers, isolate ad account telemetry, and route leakage alerts.
         </p>
       </div>
 
@@ -475,7 +482,7 @@ export const TeamScreen: React.FC<TeamScreenProps> = ({
         <div className="flex flex-col gap-0.5">
           <span className="text-[12px] font-medium text-white">Zero Direct Client Portal Access</span>
           <p className="text-[11px] text-[#cbc3d5] leading-relaxed">
-            End-clients never receive raw logins or direct team visibility. All reporting remains white-labeled under PeakScale Media with automated PDF exports.
+            End-clients never receive raw logins or direct team visibility. All reporting remains white-labeled under {agency.name} with automated PDF exports.
           </p>
         </div>
       </div>

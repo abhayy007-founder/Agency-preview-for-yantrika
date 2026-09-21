@@ -5,12 +5,14 @@ interface AddClientScreenProps {
   onBack: () => void;
   onClientAdded: (client: ClientAccount) => void;
   onShowToast: (msg: string) => void;
+  agencyName?: string;
 }
 
 export const AddClientScreen: React.FC<AddClientScreenProps> = ({
   onBack,
   onClientAdded,
-  onShowToast
+  onShowToast,
+  agencyName = 'PeakScale Media'
 }) => {
   const [clientName, setClientName] = useState("Dr. Batra's Dental & Aesthetics");
   const [industry, setIndustry] = useState('clinic');
@@ -126,7 +128,7 @@ export const AddClientScreen: React.FC<AddClientScreenProps> = ({
                 Client Audit Drilldown
               </h1>
               <span className="font-mono text-[10px] text-[#cbc3d5]">
-                PeakScale Media • Action Flow
+                {agencyName} • Action Flow
               </span>
             </div>
           </div>

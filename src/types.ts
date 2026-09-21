@@ -1,5 +1,16 @@
 export type Severity = 'high' | 'medium' | 'low';
 
+export interface Agency {
+  id: string;
+  name: string;
+  logoUrl?: string;
+  ownerUserId: string;
+  activeSeats: number;
+  maxSeats: number;
+  tier: string;
+  createdAt: string;
+}
+
 export interface ClientLeakage {
   id: string;
   title: string;
@@ -67,4 +78,5 @@ export interface PendingInvite {
   sentAgo: string;
 }
 
-export type NavTab = 'overview' | 'alerts' | 'team' | 'reports' | 'settings' | 'add-client';
+export type NavTab = 'overview' | 'alerts' | 'team' | 'reports' | 'settings' | 'add-client' | 'schema-spec';
+

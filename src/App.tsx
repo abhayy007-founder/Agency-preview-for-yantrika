@@ -7,16 +7,21 @@ import { TeamScreen } from './components/TeamScreen';
 import { AlertsScreen } from './components/AlertsScreen';
 import { ReportsScreen } from './components/ReportsScreen';
 import { SettingsScreen } from './components/SettingsScreen';
+import { SchemaSpecScreen } from './components/SchemaSpecScreen';
 import { LeakModal } from './components/LeakModal';
 import { ReassignModal } from './components/ReassignModal';
 import { Toast } from './components/Toast';
 import { INITIAL_CLIENTS, INITIAL_TEAM, INITIAL_PENDING_INVITES } from './data/mockData';
-import { ClientAccount, NavTab, TeamMember, PendingInvite } from './types';
+import { ClientAccount, NavTab, TeamMember, PendingInvite, Agency } from './types';
+import { getDemoAgencySeed, simulateClientSnapshot } from './utils/simulateSnapshot';
+import { formatINR } from './utils/formatters';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('overview');
+  const [agency, setAgency] = useState<Agency>(getDemoAgencySeed());
   const [clients, setClients] = useState<ClientAccount[]>(INITIAL_CLIENTS);
   const [team, setTeam] = useState<TeamMember[]>(INITIAL_TEAM);
+  const [currentUser, setCurrentUser] = useState<TeamMember>(INITIAL_TEAM[0]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>(INITIAL_PENDING_INVITES);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -24,78 +29,174 @@ export default function App() {
   const [activeLeakClient, setActiveLeakClient] = useState<ClientAccount | null>(null);
   const [activeReassignClient, setActiveReassignClient] = useState<ClientAccount | null>(null);
 
-  // Retainer defense prevented leak counter
+  // Retainer defense baseline
   const [totalSavedRaw, setTotalSavedRaw] = useState(184600);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
   };
 
+  /**
+   * Evaluates can_access_business(business_id) RLS logic
+   * - Admins: global implicit access
+   * - Managers: explicit access only if business is in clientIds scope
+   */
+  const canAccessClient = (clientId: string, user: TeamMember): boolean => {
+    if (user.accessTier === 'ADMIN') return true;
+    return user.clientIds?.includes(clientId) || false;
+  };
+
+  // Filter clients through RLS scoping check
+  const accessibleClients = clients.filter((c) => canAccessClient(c.id, currentUser));
+
+  const handleSwitchUser = (user: TeamMember) => {
+    setCurrentUser(user);
+    if (user.accessTier === 'ADMIN') {
+      showToast(`Switched view to ${user.name} (Admin • Global Access to all accounts)`);
+    } else {
+      const count = clients.filter((c) => user.clientIds?.includes(c.id)).length;
+      showToast(`Switched view to ${user.name} (Manager • Scoped to ${count} clients)`);
+    }
+  };
+
   const handleClientAdded = (newClient: ClientAccount) => {
-    setClients(prev => [newClient, ...prev]);
+    setClients((prev) => [newClient, ...prev]);
+    // If added by current user, grant scope to current user
+    if (currentUser.accessTier === 'MANAGER') {
+      setCurrentUser((prev) => ({
+        ...prev,
+        clientIds: [...(prev.clientIds || []), newClient.id]
+      }));
+      setTeam((prev) =>
+        prev.map((m) =>
+          m.id === currentUser.id
+            ? { ...m, clientIds: [...(m.clientIds || []), newClient.id] }
+            : m
+        )
+      );
+    }
     showToast(`Added ${newClient.name} to portfolio`);
   };
 
   const handleResolveLeak = (clientId: string) => {
-    setClients(prev => prev.map(c => {
-      if (c.id === clientId) {
-        const savedAmount = c.leakage?.leakAmountRaw || 15000;
-        setTotalSavedRaw(curr => curr + savedAmount);
-        return {
-          ...c,
-          severity: 'low',
-          isResolved: true,
-          leakage: c.leakage ? {
-            ...c.leakage,
-            title: `${c.leakage.title} (Mitigated)`,
-            description: 'Algorithmic waste stopped. Campaign normalized within target benchmark.',
-            leakAmount: 'Mitigated',
-            metricBadge: 'Zero Leakage',
-            reviewedStatus: 'Fixed just now',
-            actionLabel: 'View Audit Report',
-            actionType: 'audit'
-          } : undefined
-        };
-      }
-      return c;
-    }));
+    setClients((prev) =>
+      prev.map((c) => {
+        if (c.id === clientId) {
+          const savedAmount = c.leakage?.leakAmountRaw || 15000;
+          setTotalSavedRaw((curr) => curr + savedAmount);
+          return {
+            ...c,
+            severity: 'low',
+            isResolved: true,
+            leakage: c.leakage
+              ? {
+                  ...c.leakage,
+                  title: `${c.leakage.title} (Mitigated)`,
+                  description: 'Algorithmic waste stopped. Campaign normalized within target benchmark.',
+                  leakAmount: 'Mitigated',
+                  metricBadge: 'Zero Leakage',
+                  reviewedStatus: 'Fixed just now',
+                  actionLabel: 'View Audit Report',
+                  actionType: 'audit'
+                }
+              : undefined
+          };
+        }
+        return c;
+      })
+    );
   };
 
   const handleReassign = (clientId: string, newManagerName: string, newManagerAvatar: string) => {
-    setClients(prev => prev.map(c => {
-      if (c.id === clientId) {
-        return {
-          ...c,
-          assignedManager: newManagerName,
-          assignedManagerAvatar: newManagerAvatar
-        };
-      }
-      return c;
-    }));
+    setClients((prev) =>
+      prev.map((c) => {
+        if (c.id === clientId) {
+          return {
+            ...c,
+            assignedManager: newManagerName,
+            assignedManagerAvatar: newManagerAvatar
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  const handleUpdateMemberScope = (memberId: string, clientIds: string[]) => {
+    setTeam((prev) =>
+      prev.map((m) => {
+        if (m.id === memberId) {
+          return {
+            ...m,
+            clientIds,
+            allocatedScope: `${clientIds.length} Assigned Clients`
+          };
+        }
+        return m;
+      })
+    );
+    if (currentUser.id === memberId) {
+      setCurrentUser((prev) => ({
+        ...prev,
+        clientIds,
+        allocatedScope: `${clientIds.length} Assigned Clients`
+      }));
+    }
+  };
+
+  /**
+   * Fallback Diagnostic Heuristic Execution (PART 5)
+   */
+  const handleSimulateSnapshot = (clientId: string) => {
+    setClients((prev) =>
+      prev.map((c) => {
+        if (c.id === clientId) {
+          const updated = simulateClientSnapshot(c);
+          if (updated.leakage?.leakAmountRaw) {
+            setTotalSavedRaw((curr) => curr + updated.leakage!.leakAmountRaw);
+          }
+          return updated;
+        }
+        return c;
+      })
+    );
+  };
+
+  const handleResetDemo = () => {
+    setAgency(getDemoAgencySeed());
+    setClients(INITIAL_CLIENTS);
+    setTeam(INITIAL_TEAM);
+    setCurrentUser(INITIAL_TEAM[0]);
+    setPendingInvites(INITIAL_PENDING_INVITES);
+    setTotalSavedRaw(184600);
   };
 
   const handleInviteSent = (invite: PendingInvite) => {
-    setPendingInvites(prev => [invite, ...prev]);
+    setPendingInvites((prev) => [invite, ...prev]);
   };
 
   const handleRevokeInvite = (id: string) => {
-    setPendingInvites(prev => prev.filter(inv => inv.id !== id));
+    setPendingInvites((prev) => prev.filter((inv) => inv.id !== id));
   };
 
-  const openLeaksCount = clients.filter(c => c.severity === 'high').length;
-  const formattedTotalSaved = `₹${totalSavedRaw.toLocaleString('en-IN')}`;
+  const openLeaksCount = accessibleClients.filter((c) => c.severity === 'high').length;
+  const formattedTotalSaved = formatINR(totalSavedRaw);
 
   return (
     <div className="min-h-screen bg-[#10182F] text-[#dbe1ff] flex flex-col font-sans selection:bg-[#5d35af] selection:text-white">
       {/* Toast notification */}
       <Toast message={toastMessage} onClear={() => setToastMessage(null)} />
 
-      {/* Main App Header (hidden on full-screen Add Client wizard, shown on others) */}
+      {/* Main App Header */}
       {currentTab !== 'add-client' && (
         <Header
           currentTab={currentTab}
           onNavigate={(tab) => setCurrentTab(tab)}
           openLeaksCount={openLeaksCount}
+          agency={agency}
+          currentUser={currentUser}
+          team={team}
+          onSwitchUser={handleSwitchUser}
         />
       )}
 
@@ -103,12 +204,17 @@ export default function App() {
       <main className={`flex-1 flex flex-col w-full ${currentTab !== 'add-client' ? 'pt-16' : ''}`}>
         {currentTab === 'overview' && (
           <OverviewScreen
-            clients={clients}
+            clients={accessibleClients}
+            allClientsCount={clients.length}
             onNavigate={(tab) => setCurrentTab(tab)}
             onOpenLeak={(client) => setActiveLeakClient(client)}
             onOpenReassign={(client) => setActiveReassignClient(client)}
             onShowToast={showToast}
             totalSaved={formattedTotalSaved}
+            agencyName={agency.name}
+            currentUser={currentUser}
+            onSimulateSnapshot={handleSimulateSnapshot}
+            onResetToAdmin={() => handleSwitchUser(INITIAL_TEAM[0])}
           />
         )}
 
@@ -117,6 +223,7 @@ export default function App() {
             onBack={() => setCurrentTab('overview')}
             onClientAdded={handleClientAdded}
             onShowToast={showToast}
+            agencyName={agency.name}
           />
         )}
 
@@ -125,15 +232,17 @@ export default function App() {
             team={team}
             pendingInvites={pendingInvites}
             clients={clients}
+            agency={agency}
             onInviteSent={handleInviteSent}
             onRevokeInvite={handleRevokeInvite}
+            onUpdateMemberScope={handleUpdateMemberScope}
             onShowToast={showToast}
           />
         )}
 
         {currentTab === 'alerts' && (
           <AlertsScreen
-            clients={clients}
+            clients={accessibleClients}
             onOpenLeak={(client) => setActiveLeakClient(client)}
             onShowToast={showToast}
           />
@@ -141,24 +250,35 @@ export default function App() {
 
         {currentTab === 'reports' && (
           <ReportsScreen
-            clients={clients}
+            clients={accessibleClients}
             totalSaved={formattedTotalSaved}
+            agency={agency}
             onShowToast={showToast}
           />
         )}
 
         {currentTab === 'settings' && (
-          <SettingsScreen onShowToast={showToast} />
+          <SettingsScreen
+            agency={agency}
+            onUpdateAgency={setAgency}
+            onResetDemo={handleResetDemo}
+            onNavigate={(tab) => setCurrentTab(tab)}
+            onShowToast={showToast}
+          />
+        )}
+
+        {currentTab === 'schema-spec' && (
+          <SchemaSpecScreen onShowToast={showToast} />
         )}
       </main>
 
-      {/* Bottom Nav (visible on standard tabs) */}
+      {/* Bottom Nav */}
       {currentTab !== 'add-client' && (
         <BottomNav
           currentTab={currentTab}
           onNavigate={(tab) => setCurrentTab(tab)}
           openLeaksCount={openLeaksCount}
-          seatsText={`${team.length}/8`}
+          seatsText={`${team.length}/${agency.maxSeats}`}
         />
       )}
 

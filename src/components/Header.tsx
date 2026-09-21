@@ -1,14 +1,27 @@
 import React, { useState } from 'react';
-import { NavTab } from '../types';
+import { NavTab, Agency, TeamMember } from '../types';
 
 interface HeaderProps {
   currentTab: NavTab;
   onNavigate: (tab: NavTab) => void;
   openLeaksCount: number;
+  agency: Agency;
+  currentUser: TeamMember;
+  team: TeamMember[];
+  onSwitchUser: (user: TeamMember) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, openLeaksCount }) => {
+export const Header: React.FC<HeaderProps> = ({
+  currentTab,
+  onNavigate,
+  openLeaksCount,
+  agency,
+  currentUser,
+  team,
+  onSwitchUser
+}) => {
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   return (
     <header className="fixed top-0 inset-x-0 z-50 bg-[#10182F]/90 backdrop-blur-xl shadow-[0_1px_12px_rgba(0,0,0,0.4)] pt-safe border-b border-[#212941]/50">
@@ -19,11 +32,10 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, openLeak
           onClick={() => onNavigate('overview')}
         >
           <img
-            alt="Yantrika Agency Logo"
+            alt={`${agency.name} Logo`}
             className="h-7 sm:h-8 w-auto object-contain shrink-0"
-            src="https://lh3.googleusercontent.com/aida/AEtjO1W89mzLpJnwWpE1gQX_UylOfZXEXmY6KVdEAzd1IKVg6m5U0zsA4DfwNK6fUw175s5b-rROqbGYNf_HAQ9ZqSnz1Ar02jMTToBuxYp4CD1BJRN8MKpiZkj00YfoYl50JRNdSS4n5oqzi-xUZ186U_K44fZhewLpHaPQB2hoQm_IRvpne21ofPmQsKMGf9ox1R2y5W8d1JLtlbVxo7EPE7PJDhy38GD0Dw6vvzSKZyW-wcSn2avX4qSv66U"
+            src={agency.logoUrl || "https://lh3.googleusercontent.com/aida/AEtjO1W89mzLpJnwWpE1gQX_UylOfZXEXmY6KVdEAzd1IKVg6m5U0zsA4DfwNK6fUw175s5b-rROqbGYNf_HAQ9ZqSnz1Ar02jMTToBuxYp4CD1BJRN8MKpiZkj00YfoYl50JRNdSS4n5oqzi-xUZ186U_K44fZhewLpHaPQB2hoQm_IRvpne21ofPmQsKMGf9ox1R2y5W8d1JLtlbVxo7EPE7PJDhy38GD0Dw6vvzSKZyW-wcSn2avX4qSv66U"}
             onError={(e) => {
-              // Graceful SVG render if network is restricted
               e.currentTarget.style.display = 'none';
             }}
           />
@@ -37,12 +49,12 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, openLeak
               </span>
             </div>
             <span className="text-[11px] text-[#cbc3d5]/80 truncate">
-              PeakScale Media • Portal
+              {agency.name} • Portal
             </span>
           </div>
         </div>
 
-        {/* Right: Live Radar Alert Pulse & Account Avatar */}
+        {/* Right: Live Radar Alert Pulse & Interactive Persona Switcher */}
         <div className="flex items-center gap-1.5 shrink-0 relative">
           <button
             aria-label="Live waste signal notifications"
@@ -92,14 +104,98 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onNavigate, openLeak
             </div>
           )}
 
-          <div 
-            onClick={() => onNavigate('team')} 
-            className="flex items-center gap-1.5 pl-1 cursor-pointer"
-            title="Rahul Mehta (Lead Admin)"
-          >
-            <div className="w-8 h-8 rounded-full bg-[#5d35af] flex items-center justify-center shrink-0 ring-2 ring-[#10182F] hover:ring-[#42A5F5] transition-all">
-              <span className="material-symbols-outlined text-[#3c028f] text-[18px]">person</span>
-            </div>
+          {/* Persona / Role Switcher */}
+          <div className="relative">
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-[#171f36] hover:bg-[#212941] border border-[#212941] transition-all cursor-pointer"
+              title={`Logged in as ${currentUser.name} (${currentUser.accessTier})`}
+            >
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-white text-[11px] ${
+                currentUser.accessTier === 'ADMIN' ? 'bg-[#5D35AF]' : 'bg-[#0070dd]'
+              }`}>
+                {currentUser.initials}
+              </div>
+              <div className="hidden sm:flex flex-col text-left">
+                <span className="text-[11px] font-semibold text-white leading-tight">
+                  {currentUser.name.split(' ')[0]}
+                </span>
+                <span className="font-mono text-[9px] text-[#42A5F5]">
+                  {currentUser.accessTier}
+                </span>
+              </div>
+              <span className="material-symbols-outlined text-[#cbc3d5] text-[16px]">expand_more</span>
+            </button>
+
+            {/* Persona Switcher Menu */}
+            {showUserMenu && (
+              <div className="absolute right-0 top-12 w-64 bg-[#171f36] border border-[#2c344c] rounded-xl shadow-2xl p-2.5 z-50 flex flex-col gap-2">
+                <div className="px-2 py-1 border-b border-[#212941] flex items-center justify-between">
+                  <span className="font-mono text-[10px] uppercase text-[#cbc3d5]">
+                    Simulate Role (RLS Test)
+                  </span>
+                  <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-[#212941] text-[#42A5F5]">
+                    Part 1 &amp; 3
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  {team.map((m) => {
+                    const isSelected = m.id === currentUser.id;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          onSwitchUser(m);
+                          setShowUserMenu(false);
+                        }}
+                        className={`flex items-center justify-between p-2 rounded-lg text-left transition-all ${
+                          isSelected
+                            ? 'bg-[#212941] text-white ring-1 ring-[#42A5F5]'
+                            : 'hover:bg-[#131b32] text-[#cbc3d5]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${
+                            m.accessTier === 'ADMIN' ? 'bg-[#5D35AF]' : 'bg-[#0070dd]'
+                          }`}>
+                            {m.initials}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-[12px] font-medium text-white truncate">
+                              {m.name}
+                            </span>
+                            <span className="font-mono text-[9px] text-[#cbc3d5] truncate">
+                              {m.accessTier === 'ADMIN' ? 'Global (All 14)' : m.allocatedScope}
+                            </span>
+                          </div>
+                        </div>
+                        <span className={`font-mono text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                          m.accessTier === 'ADMIN'
+                            ? 'bg-[#5D35AF]/30 text-[#d1bcff]'
+                            : 'bg-[#0070dd]/20 text-[#aac7ff]'
+                        }`}>
+                          {m.accessTier}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-1 border-t border-[#212941]">
+                  <button
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      onNavigate('schema-spec');
+                    }}
+                    className="w-full py-1.5 px-2 rounded bg-[#131b32] hover:bg-[#212941] text-[11px] text-[#42A5F5] font-mono flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">terminal</span>
+                    <span>View Supabase Schema Spec</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
