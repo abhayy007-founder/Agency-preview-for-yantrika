@@ -1,0 +1,6 @@
+{
+  "name": "Yantrika Agency",
+  "description": "Ad spend leakage prevention and retainer defense platform for performance marketing agencies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
